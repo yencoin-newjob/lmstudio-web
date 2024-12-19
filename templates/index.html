@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEWJOB的语言助手</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 10px; /* Reduced padding for smaller spacing */
+            background-color: #f5f5f5;
+        }
+
+        h1, h2 {
+            text-align: center;
+            color: #333;
+            font-size: 1.2em; /* Reduced font size for the title */
+        }
+
+        #chat-container {
+            background-color: white;
+            padding: 15px; /* Reduced padding for smaller spacing */
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 15px; /* Reduced margin for smaller spacing */
+        }
+
+        label {
+            font-weight: bold;
+            display: block;
+            margin-top: 5px; /* Reduced margin for smaller spacing */
+            color: #555;
+        }
+
+        textarea, select, input {
+            width: 100%;
+            padding: 8px; /* Reduced padding for smaller spacing */
+            margin-top: 3px; /* Reduced margin for smaller spacing */
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 8px 16px; /* Reduced padding for smaller spacing */
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-top: 8px; /* Reduced margin for smaller spacing */
+            width: 100%;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        #output-container, #history-container {
+            background-color: white;
+            padding: 15px; /* Reduced padding for smaller spacing */
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-top: 15px; /* Reduced margin for smaller spacing */
+        }
+
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background-color: #f8f9fa;
+            padding: 12px; /* Reduced padding for smaller spacing */
+            border-radius: 4px;
+            margin-top: 8px; /* Reduced margin for smaller spacing */
+        }
+    </style>
+</head>
+<body>
+    <h1>NEWJOB的语言助手</h1>
+
+    <div id="chat-container">
+        <form id="chat-form">
+            <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                <label for="model-name" style="margin-right: 5px;">模型名称:</label>
+                <select id="model-name" style="width: 180px; margin-left: 5px;"></select>
+            </div>
+
+            <div style="display: flex; flex-direction: column; margin-top: 5px;">
+                <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                    <label for="max-length" style="margin-right: 5px;">最大生成长度:</label>
+                    <input type="number" id="max-length" min="16" max="2048" step="16" value="512" style="width: auto; margin-right: 20px;">
+                </div>
+                <div style="display: flex; align-items: center;">
+                    <label for="timeout" style="margin-right: 5px;">等待延时（秒）:</label>
+                    <input type="number" id="timeout" min="1" value="240" style="width: 60px;">
+                </div>
+            </div>
+
+            <label for="user-input">用户输入:</label>
+            <textarea id="user-input" rows="5"></textarea>
+
+            <label for="file-upload">上传文件PDF/TXT/CSV:</label>
+            <input type="file" id="file-upload" accept=".txt,.json,.csv,.pdf,.docx" multiple>
+            <div class="file-upload-hint" style="color: #666; font-size: 0.9em; margin-top: 5px;">
+                
+            </div>
+
+            <label for="image-upload" id="image-upload-label" style="display: none;">
+                上传图片(刷新后发送):
+                <input type="file" id="image-upload" accept="image/*">
+                <div id="image-preview" style="display: none; margin-top: 10px;">
+                    <img id="preview-img" style="max-width: 200px; max-height: 200px; object-fit: contain; border: 1px solid #ddd; border-radius: 4px;">
+                </div>
+            </label>
+
+            <button type="button" id="submit-button">发送</button>
+        </form>
+    </div>
+
+    <!-- 增加一个加载状态的容器 -->
+    <div id="loading" style="display: none; text-align: center; color: gray; font-style: italic;">
+        正在处理，请稍候…
+    </div>
+
+
+    <div id="output-container">
+        <h2>助手回复:</h2>
+        <pre id="output"></pre>
+    </div>
+
+    <div id="history-container">
+        <h2>对话历史:</h2>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <button type="button" id="load-history-button" style="width: auto; margin: 0;">加载历史对话</button>
+            <button type="button" id="clear-history-button" style="width: auto; margin: 0;">清除历史</button>
+        </div>
+        <pre id="history"></pre>
+    </div>
+
+    <script>
+        const API_BASE_URL = window.location.protocol + "//" + window.location.hostname + ":8180";  // 动态获取主机地址，支持局域网访问
+        const modelDropdown = document.getElementById('model-name');
+        const historyContainer = document.getElementById('history');
+        const outputContainer = document.getElementById('output');
+        const loadingContainer = document.getElementById('loading');
+        const submitButton = document.getElementById('submit-button');
+        const loadHistoryButton = document.getElementById('load-history-button');
+        const clearHistoryButton = document.getElementById('clear-history-button');
+
+        let conversationHistory = [];
+
+        // 从服务器加载历史对话
+        async function loadHistory() {
+            // 首先尝试从本地存储加载
+            const savedHistory = localStorage.getItem('chatHistory');
+            if (savedHistory) {
+                conversationHistory = JSON.parse(savedHistory);
+                updateHistory();
+                return;
+            }
+
+            // 如果本地没有历史记录，则从服务器加载
+            try {
+                const response = await fetch(`${API_BASE_URL}/get_history`);
+                if (response.ok) {
+                    const data = await response.json();
+                    conversationHistory = data.history || [];
+                    // 将服务器的历史记录保存到本地
+                    localStorage.setItem('chatHistory', JSON.stringify(conversationHistory));
+                    updateHistory();
+                } else {
+                    alert('没有找到历史对话记录');
+                }
+            } catch (error) {
+                alert('无法连接到服务器加载历史对话记录');
+            }
+        }
+
+        // 清除历史对话
+        async function clearHistory() {
+            try {
+                // 清除本地存储的历史记录
+                conversationHistory = [];
+                localStorage.removeItem('chatHistory');
+                
+                // 发送请求到服务器清除历史文件
+                const response = await fetch(`${API_BASE_URL}/clear_history`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    updateHistory();
+                    alert('历史对话已清除');
+                } else {
+                    alert('清除历史对话失败');
+                }
+            } catch (error) {
+                alert('清除历史对话时出错');
+                console.error(error);
+            }
+        }
+
+        // 获取可用模型
+        async function fetchModels() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/get_models`);
+                const data = await response.json();
+                if (data.data) {
+                    data.data.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model.id;
+                        option.textContent = model.id;
+                        modelDropdown.appendChild(option);
+                    });
+                    
+                    // 添加模型变化的监听器
+                    modelDropdown.addEventListener('change', function() {
+                        const selectedModel = this.value.toLowerCase();
+                        const imageUploadLabel = document.getElementById('image-upload-label');
+                        if (selectedModel.includes('llava')) {
+                            imageUploadLabel.style.display = 'block';
+                        } else {
+                            imageUploadLabel.style.display = 'none';
+                            document.getElementById('image-upload').value = ''; // 清除已选择的图片
+                        }
+                    });
+                    
+                    // 初始检查选中的模型
+                    const initialModel = modelDropdown.value.toLowerCase();
+                    const imageUploadLabel = document.getElementById('image-upload-label');
+                    imageUploadLabel.style.display = initialModel.includes('llava') ? 'block' : 'none';
+                } else {
+                    alert("无法获取模型列表");
+                }
+            } catch (error) {
+                alert("服务器连接失败");
+            }
+        }
+
+        // 发送请求
+        async function sendMessage() {
+            const userInput = document.getElementById('user-input').value;
+            const modelName = document.getElementById('model-name').value;
+            const maxLength = document.getElementById('max-length').value;
+            const timeout = document.getElementById('timeout').value;
+            const fileInput = document.getElementById('file-upload');
+            const imageInput = document.getElementById('image-upload');
+
+            if (!userInput || !modelName) {
+                alert("请输入内容并选择模型");
+                return;
+            }
+
+            // 显示加载状态
+            loadingContainer.style.display = 'block';
+            submitButton.disabled = true;
+            outputContainer.textContent = '';
+
+            try {
+                // 重置 messages 数组，确保每次都是新的开始
+                let messages = [];
+                
+                // 如果有历史记录，只保留最后几轮对话（比如最后3轮）
+                if (conversationHistory.length > 0) {
+                    const recentHistory = conversationHistory.slice(-6); // 保留最后3轮对话（6条消息）
+                    messages = recentHistory.map(turn => ({
+                        role: turn.role,
+                        content: turn.content
+                    }));
+                }
+                
+                // 添加新的用户输入
+                messages.push({ role: "user", content: userInput });
+
+                const payload = {
+                    model: modelName,
+                    messages,
+                    max_tokens: parseInt(maxLength, 10),
+                    timeout: parseInt(timeout, 10)
+                };
+
+                // 创建 FormData 对象
+                const formData = new FormData();
+                formData.append('payload', JSON.stringify(payload));
+
+                // 确定使用哪个端点
+                let endpoint = '/chat';
+
+                // 处理文件和图片上传
+                if (fileInput.files.length > 0 || (modelName.toLowerCase().includes('llava') && imageInput.files.length > 0)) {
+                    endpoint = '/v1/embeddings';
+                    
+                    // 添加文件
+                    if (fileInput.files.length > 0) {
+                        formData.append('file', fileInput.files[0]);
+                    }
+                    
+                    // 添加图片
+                    if (modelName.toLowerCase().includes('llava') && imageInput.files.length > 0) {
+                        formData.append('image', imageInput.files[0]);
+                    }
+                }
+
+                const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                    method: 'POST',
+                    headers: endpoint === '/chat' ? {
+                        'Content-Type': 'application/json'
+                    } : {},
+                    body: endpoint === '/chat' ? JSON.stringify(payload) : formData
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const assistantResponse = data.choices[0].message.content;
+
+                    // 更新本地历史记录
+                    conversationHistory.push({ role: "user", content: userInput });
+                    conversationHistory.push({ role: "assistant", content: assistantResponse });
+                    localStorage.setItem('chatHistory', JSON.stringify(conversationHistory));
+
+                    outputContainer.textContent = assistantResponse;
+                    updateHistory();
+                    
+                    // 清空输入
+                    document.getElementById('user-input').value = '';
+                    document.getElementById('file-upload').value = ''; // 清空文件输入
+                    document.getElementById('image-upload').value = ''; // 清空图片输入
+                } else {
+                    outputContainer.textContent = `Error: ${response.status} - ${await response.text()}`;
+                }
+            } catch (error) {
+                alert("请求失败，请检查服务器连接");
+            } finally {
+                loadingContainer.style.display = 'none';
+                submitButton.disabled = false;
+            }
+        }
+
+        // 更新对话历史
+        function updateHistory() {
+            historyContainer.textContent = conversationHistory
+                .map(turn => `${turn.role}: ${turn.content}`)
+                .join('\n\n');
+        }
+
+        // 事件绑定
+        document.getElementById('submit-button').addEventListener('click', sendMessage);
+        loadHistoryButton.addEventListener('click', loadHistory);
+        clearHistoryButton.addEventListener('click', clearHistory);
+
+        // 初始化
+        fetchModels();
+
+        // 在 script 标签内添加图片预览功能
+        document.getElementById('image-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const previewDiv = document.getElementById('image-preview');
+            const previewImg = document.getElementById('preview-img');
+            
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewImg.src = e.target.result;
+                    previewDiv.style.display = 'block';
+                }
+                reader.readAsDataURL(file);
+            } else {
+                previewDiv.style.display = 'none';
+                previewImg.src = '';
+            }
+        });
+    </script>
+</body>
+</html>
